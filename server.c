@@ -38,6 +38,8 @@ void* handle_clients(void* arg) {
 
         *shared_sum += number;
 
+        printf("Server: Received number %d, current sum is %d\n", number, *shared_sum);
+
         pthread_mutex_unlock(mutex);
 
         // Пауза для предотвращения слишком частого обновления
