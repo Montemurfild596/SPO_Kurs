@@ -6,20 +6,28 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
-#define MAX_CLIENTS 5
-#define SHM_SIZE (sizeof(pthread_mutex_t) + sizeof(int) + sizeof(int[MAX_CLIENTS]))
+#define SHM_SIZE (sizeof(pthread_mutex_t) + sizeof(int) + sizeof(int*) + sizeof(int))
 
 pthread_mutex_t *mutex;
 int *shared_sums;
+int **client_numbers;
+int *num_clients;
 
 void cleanup() {
     pthread_mutex_destroy(mutex);
     shmdt(mutex);
+
+    for (int i = 0; i < *num_clients; ++i) {
+        free(client_numbers[i]);
+    }
+    free(client_numbers);
+
     shmctl(shmget(ftok("/tmp", 'A'), 0, 0666), IPC_RMID, 0); // Удаляем сегмент разделяемой памяти
 }
 
 void* handle_client(void* arg) {
-    int client_number = *((int*)arg);
+    int *client_data = (int*)arg;
+    int client_number = client_data[0];
 
     while (1) {
         pthread_mutex_lock(mutex);
@@ -64,23 +72,34 @@ int main() {
     }
 
     shared_sums = (int *)(mutex + 1);
+    client_numbers = (int**)(shared_sums + 1);
+    num_clients = (int*)(client_numbers + 1);
+
+    // Выделение памяти для массива указателей на данные клиентов
+    client_numbers[0] = (int*)malloc(sizeof(int));
+    num_clients[0] = 0;
+
+    while (1) {
+        // Выделение памяти для данных нового клиента
+        client_numbers[*num_clients] = (int*)malloc(sizeof(int));
+        *(client_numbers[*num_clients]) = *num_clients;
+
+        // Создание нитей для обработки клиентов
+        pthread_t thread;
+        pthread_create(&thread, NULL, handle_client, client_numbers[*num_clients]);
+
+        // Увеличение счетчика клиентов
+        (*num_clients)++;
+    }
 
     pthread_mutex_init(mutex, NULL);
 
-    pthread_t threads[MAX_CLIENTS];
-
-    int client_numbers[MAX_CLIENTS];
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        client_numbers[i] = i;
-        pthread_create(&threads[i], NULL, handle_client, &client_numbers[i]);
-    }
-
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        pthread_join(threads[i], NULL);
+    for (int i = 0; i < *num_clients; ++i) {
+        pthread_join(thread, NULL);
     }
 
     printf("Server: Final sums are ");
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
+    for (int i = 0; i < *num_clients; ++i) {
         printf("%d ", shared_sums[i]);
     }
     printf("\n");
