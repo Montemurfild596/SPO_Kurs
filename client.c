@@ -1,15 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
-#define SHM_SIZE 1024
+#define SHM_SIZE (sizeof(pthread_mutex_t) + sizeof(int) + sizeof(int[MAX_CLIENTS]))
 
 pthread_mutex_t *mutex;
-int *shared_sum;
+int *shared_sums;
 
 void cleanup() {
     shmdt(mutex);
@@ -19,7 +18,7 @@ int main() {
     key_t key = ftok("/tmp", 'A');
     int shmid;
 
-    if ((shmid = shmget(key, sizeof(pthread_mutex_t) + sizeof(int), 0666)) < 0) {
+    if ((shmid = shmget(key, SHM_SIZE, 0666)) < 0) {
         perror("shmget failed");
         exit(EXIT_FAILURE);
     }
@@ -29,7 +28,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    shared_sum = (int *)(mutex + 1);
+    shared_sums = (int *)(mutex + 1);
 
     while (1) {
         pthread_mutex_lock(mutex);
