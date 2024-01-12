@@ -1,16 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
-#define SHM_SIZE 1024
+#define MAX_CLIENTS 5
+#define SHM_SIZE (sizeof(pthread_mutex_t) + sizeof(int) + sizeof(int[MAX_CLIENTS]))
 
 pthread_mutex_t *mutex;
-int *shared_sum;
+int *shared_sums;
 
 void cleanup() {
     pthread_mutex_destroy(mutex);
@@ -18,13 +18,13 @@ void cleanup() {
     shmctl(shmget(ftok("/tmp", 'A'), 0, 0666), IPC_RMID, 0); // Удаляем сегмент разделяемой памяти
 }
 
-void* handle_clients(void* arg) {
-    int* client_number = (int*)arg;
+void* handle_client(void* arg) {
+    int client_number = *((int*)arg);
 
     while (1) {
         pthread_mutex_lock(mutex);
 
-        printf("Server: Waiting for data from client %d\n", *client_number);
+        printf("Server: Waiting for data from client %d\n", client_number);
 
         // Ожидаем, пока клиент передаст число
         int number;
@@ -36,9 +36,9 @@ void* handle_clients(void* arg) {
             break;
         }
 
-        *shared_sum += number;
+        shared_sums[client_number] += number;
 
-        printf("Server: Received number %d, current sum is %d\n", number, *shared_sum);
+        printf("Server: Received number %d from client %d, current sum is %d\n", number, client_number, shared_sums[client_number]);
 
         pthread_mutex_unlock(mutex);
 
@@ -53,7 +53,7 @@ int main() {
     key_t key = ftok("/tmp", 'A');
     int shmid;
 
-    if ((shmid = shmget(key, sizeof(pthread_mutex_t) + sizeof(int), IPC_CREAT | 0666)) < 0) {
+    if ((shmid = shmget(key, SHM_SIZE, IPC_CREAT | 0666)) < 0) {
         perror("shmget failed");
         exit(EXIT_FAILURE);
     }
@@ -63,22 +63,27 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    shared_sum = (int *)(mutex + 1);
+    shared_sums = (int *)(mutex + 1);
 
     pthread_mutex_init(mutex, NULL);
 
-    pthread_t thread1, thread2;
+    pthread_t threads[MAX_CLIENTS];
 
-    int client1_number = 1;
-    int client2_number = 2;
+    int client_numbers[MAX_CLIENTS];
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        client_numbers[i] = i;
+        pthread_create(&threads[i], NULL, handle_client, &client_numbers[i]);
+    }
 
-    pthread_create(&thread1, NULL, handle_clients, &client1_number);
-    pthread_create(&thread2, NULL, handle_clients, &client2_number);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        pthread_join(threads[i], NULL);
+    }
 
-    pthread_join(thread1, NULL);
-    pthread_join(thread2, NULL);
-
-    printf("Server: Final sum is %d\n", *shared_sum);
+    printf("Server: Final sums are ");
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        printf("%d ", shared_sums[i]);
+    }
+    printf("\n");
 
     atexit(cleanup);
 
