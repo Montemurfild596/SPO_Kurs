@@ -3,75 +3,37 @@
 #include <string.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <pthread.h>
 
-#define SHM_SIZE sizeof(int)
+#define SHM_SIZE 1024
 
-void *thread_func(void *arg) {
-    int shm_id = *(int*)arg;
-    int *shm_ptr;
-    int num;
+int shmid;
+void *shared_memory;
+pthread_mutex_t lock;
 
-    // Получаем указатель на разделяемую память
-    shm_ptr = shmat(shm_id, NULL, 0);
-    if (shm_ptr == (int*)-1) {
-        perror("shmat");
-        exit(1);
-    }
-
-    // Читаем число из разделяемой памяти
-    num = *shm_ptr;
-
-    // Записываем сумму всех чисел в разделяемую память
-    *shm_ptr += num;
-
-    // Отсоединяемся от разделяемой памяти
-    if (shmdt(shm_ptr) == -1) {
-        perror("shmdt");
-        exit(1);
-    }
-
+void *handle_client(void *arg) {
+    int num = *(int*)arg;
+    pthread_mutex_lock(&lock);
+    *(int*)shared_memory += num;
+    pthread_mutex_unlock(&lock);
     return NULL;
 }
 
 int main() {
-    int shm_id;
-    int *shm_ptr;
-    pthread_t tid;
+    key_t key = ftok("shmfile", 65);
+    shmid = shmget(key, SHM_SIZE, 0666|IPC_CREAT);
+    shared_memory = shmat(shmid, NULL, 0);
+    pthread_mutex_init(&lock, NULL);
 
-    // Создаем разделяемую память
-    shm_id = shmget(IPC_PRIVATE, SHM_SIZE, IPC_CREAT | 0666);
-    if (shm_id == -1) {
-        perror("shmget");
-        exit(1);
+    while (1) {
+        int num;
+        printf("Enter a number: ");
+        scanf("%d", &num);
+        pthread_t thread;
+        pthread_create(&thread, NULL, handle_client, &num);
     }
 
-    // Получаем указатель на разделяемую память
-    shm_ptr = shmat(shm_id, NULL, 0);
-    if (shm_ptr == (int*)-1) {
-        perror("shmat");
-        exit(1);
-    }
-
-    // Создаем нить
-    pthread_create(&tid, NULL, thread_func, &shm_id);
-
-    // Ждем, пока нить не завершится
-    pthread_join(tid, NULL);
-
-    // Отсоединяемся от разделяемой памяти
-    if (shmdt(shm_ptr) == -1) {
-        perror("shmdt");
-        exit(1);
-    }
-
-    // Удаляем разделяемую память
-    if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
-        perror("shmctl");
-        exit(1);
-    }
-
+    shmdt(shared_memory);
+    shmctl(shmid, IPC_RMID, NULL);
     return 0;
 }
