@@ -13,16 +13,25 @@ sem_t mutex;
 void *process_request(void *arg) {
     int *shared_data = (int *)arg;
 
-    // Блокировка критической секции
-    sem_wait(&mutex);
+    while (1) {
+        // Ожидание запроса от клиента
+        printf("Ждем запрос от клиента...\n");
 
-    // Обработка запроса
-    *shared_data += *shared_data;
+        // Блокировка критической секции
+        sem_wait(&mutex);
 
-    // Разблокировка критической секции
-    sem_post(&mutex);
+        // Обработка запроса
+        *shared_data += *shared_data;
 
-    pthread_exit(NULL);
+        // Разблокировка критической секции
+        sem_post(&mutex);
+
+        // Отправка ответа клиенту
+        printf("Отправляем ответ клиенту: %d\n", *shared_data);
+
+        // Пауза для синхронизации
+        sleep(1);
+    }
 }
 
 int main() {
@@ -33,21 +42,13 @@ int main() {
     // Инициализация семафора
     sem_init(&mutex, 0, 1);
 
-    while (1) {
-        pthread_t thread;
+    pthread_t thread;
 
-        // Принимаем соединение от клиента
-        printf("Ждем запрос от клиента...\n");
+    // Запуск потока для обработки запросов
+    pthread_create(&thread, NULL, process_request, (void *)shared_data);
 
-        // Запуск процесса обработки запроса в отдельном потоке
-        pthread_create(&thread, NULL, process_request, (void *)shared_data);
-
-        // Ждем завершения потока
-        pthread_join(thread, NULL);
-
-        // Отправка ответа клиенту
-        printf("Отправляем ответ клиенту: %d\n", *shared_data);
-    }
+    // Ожидание завершения потока
+    pthread_join(thread, NULL);
 
     // Освобождение ресурсов
     shmdt(shared_data);
