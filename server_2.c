@@ -1,79 +1,68 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
-#include <sys/sem.h>
-#include <pthread.h>
+#include <semaphore.h>
 
-#define SHM_KEY 123456
-#define SEM_KEY 654321
+#define SHM_SIZE  sizeof(int)
+#define MAX_CLIENTS 5
 
-int sum = 0;
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+int *shared_memory;
+sem_t *sem;
 
-void *handle_client(void *arg) {
-    int shmid, semid;
-    int *shared_memory;
-    struct sembuf sem_op;
+void *client_handler(void *arg) {
+    int client_number = *((int *)arg);
 
-    // Получаем доступ к разделяемой памяти
-    if ((shmid = shmget(SHM_KEY, sizeof(int), 0666)) < 0) {
-        perror("shmget");
-        exit(1);
+    while (1) {
+        int client_input;
+        sem_wait(sem);  // Ждем, пока семафор не станет доступным
+
+        printf("Server received from Client %d: %d\n", client_number, *shared_memory);
+
+        // Обработка полученных данных
+
+        // Отправка результата клиенту
+        *shared_memory += client_number;
+
+        sem_post(sem);  // Освобождаем семафор
+
+        sleep(1);  // Имитация обработки данных
     }
 
-    // Получаем доступ к разделяемой памяти
-    if ((shared_memory = shmat(shmid, NULL, 0)) == (int *) -1) {
-        perror("shmat");
-        exit(1);
-    }
-
-    // Получаем доступ к семафору
-    if ((semid = semget(SEM_KEY, 1, 0666)) < 0) {
-        perror("semget");
-        exit(1);
-    }
-
-    // Читаем число из разделяемой памяти
-    sem_op.sem_num = 0;
-    sem_op.sem_op = -1;
-    sem_op.sem_flg = 0;
-    semop(semid, &sem_op, 1);
-    int number = *shared_memory;
-    sem_op.sem_op = 1;
-    semop(semid, &sem_op, 1);
-
-    // Обновляем сумму
-    pthread_mutex_lock(&lock);
-    sum += number;
-    printf("Sum: %d\n", sum);
-    pthread_mutex_unlock(&lock);
-
-    // Освобождаем разделяемую память
-    if (shmdt(shared_memory) < 0) {
-        perror("shmdt");
-        exit(1);
-    }
-
-    return NULL;
+    pthread_exit(NULL);
 }
 
 int main() {
-    pthread_t thread;
+    key_t key = ftok("shared_memory_key", 'R');
+    int shmid = shmget(key, SHM_SIZE, IPC_CREAT | 0666);
+    shared_memory = (int *)shmat(shmid, NULL, 0);
 
-    while (1) {
-        // Создаем новую нить для обработки клиента
-        if (pthread_create(&thread, NULL, handle_client, NULL) != 0) {
-            perror("pthread_create");
-            exit(1);
-        }
-
-        // Ждем завершения нити
-        if (pthread_join(thread, NULL) != 0) {
-            perror("pthread_join");
-            exit(1);
-        }
+    sem = sem_open("/my_semaphore", O_CREAT | O_EXCL, 0666, 1);
+    if (sem == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
     }
+
+    pthread_t threads[MAX_CLIENTS];
+
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        int *client_number = malloc(sizeof(int));
+        *client_number = i + 1;
+        pthread_create(&threads[i], NULL, client_handler, (void *)client_number);
+    }
+
+    // Ждем завершения всех нитей
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+
+    sem_close(sem);
+    sem_unlink("/my_semaphore");
+
+    shmdt(shared_memory);
+    shmctl(shmid, IPC_RMID, NULL);
 
     return 0;
 }
