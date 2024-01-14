@@ -11,9 +11,19 @@
 
 int *shared_memory;
 sem_t *sem;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+int clients_connected = 0;
 
 void *client_handler(void *arg) {
     int client_number = *((int *)arg);
+
+    pthread_mutex_lock(&mutex);
+    clients_connected++;
+    if (clients_connected == 1) {
+        pthread_cond_signal(&cond);
+    }
+    pthread_mutex_unlock(&mutex);
 
     while (1) {
         int client_input;
@@ -46,6 +56,12 @@ int main() {
     }
 
     pthread_t threads[MAX_CLIENTS];
+
+    pthread_mutex_lock(&mutex);
+    while (clients_connected == 0) {
+        pthread_cond_wait(&cond, &mutex);
+    }
+    pthread_mutex_unlock(&mutex);
 
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int *client_number = malloc(sizeof(int));
