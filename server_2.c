@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <semaphore.h>
@@ -11,32 +10,27 @@
 
 int *shared_memory;
 sem_t *sem;
-pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int clients_connected = 0;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+int sum = 0;
 
 void *client_handler(void *arg) {
     int client_number = *((int *)arg);
 
-    pthread_mutex_lock(&mutex);
-    clients_connected++;
-    if (clients_connected == 1) {
-        pthread_cond_signal(&cond);
-    }
-    pthread_mutex_unlock(&mutex);
-
     while (1) {
         int client_input;
-        sem_wait(sem);  // Ждем, пока семафор не станет доступным
+        sem_wait(sem);
 
         printf("Server received from Client %d: %d\n", client_number, *shared_memory);
 
         // Обработка полученных данных
+        sum += *shared_memory;
 
         // Отправка результата клиенту
-        *shared_memory += client_number;
+        *shared_memory = sum;
 
-        sem_post(sem);  // Освобождаем семафор
+        sem_post(sem);
 
         sleep(1);  // Имитация обработки данных
     }
@@ -57,21 +51,30 @@ int main() {
 
     pthread_t threads[MAX_CLIENTS];
 
-    pthread_mutex_lock(&mutex);
-    while (clients_connected == 0) {
-        pthread_cond_wait(&cond, &mutex);
-    }
-    pthread_mutex_unlock(&mutex);
-
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         int *client_number = malloc(sizeof(int));
         *client_number = i + 1;
         pthread_create(&threads[i], NULL, client_handler, (void *)client_number);
     }
 
-    // Ждем завершения всех нитей
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        pthread_join(threads[i], NULL);
+    while (1) {
+        int server_input;
+        printf("Enter a number for the server: ");
+        scanf("%d", &server_input);
+
+        sem_wait(sem);
+        *shared_memory = server_input;
+        sem_post(sem);
+
+        pthread_mutex_lock(&mutex);
+        while (sum == 0) {
+            pthread_cond_wait(&cond, &mutex);
+        }
+        pthread_mutex_unlock(&mutex);
+
+        printf("Server received total sum: %d\n", *shared_memory);
+
+        sleep(1);  // Имитация обработки результата
     }
 
     sem_close(sem);
