@@ -9,13 +9,17 @@
 #define SHM_SIZE  sizeof(int)
 
 sem_t mutex;
+int client_connected = 0;
 
 void *process_request(void *arg) {
     int *shared_data = (int *)arg;
 
     while (1) {
-        // Ожидание запроса от клиента
-        printf("Ждем запрос от клиента...\n");
+        // Ждем, пока клиент подключится
+        while (!client_connected) {
+            // Приостановим выполнение сервера
+            pause();
+        }
 
         // Блокировка критической секции
         sem_wait(&mutex);
@@ -29,8 +33,8 @@ void *process_request(void *arg) {
         // Отправка ответа клиенту
         printf("Отправляем ответ клиенту: %d\n", *shared_data);
 
-        // Пауза для синхронизации
-        sleep(1);
+        // Сбрасываем флаг
+        client_connected = 0;
     }
 }
 
@@ -47,8 +51,17 @@ int main() {
     // Запуск потока для обработки запросов
     pthread_create(&thread, NULL, process_request, (void *)shared_data);
 
-    // Ожидание завершения потока
-    pthread_join(thread, NULL);
+    while (1) {
+        // Ожидаем подключения клиента
+        printf("Ждем подключения клиента...\n");
+        client_connected = 1;
+
+        // После подключения клиента возобновим выполнение сервера
+        kill(getpid(), SIGCONT);
+
+        // Пауза для синхронизации
+        sleep(1);
+    }
 
     // Освобождение ресурсов
     shmdt(shared_data);
