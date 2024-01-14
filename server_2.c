@@ -1,70 +1,68 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <pthread.h>
 #include <semaphore.h>
 
-#define SHM_SIZE  sizeof(int)
+#define SHM_KEY 1234
+#define BUFFER_SIZE sizeof(struct Message)
 
 sem_t mutex;
-int client_connected = 0;
+int shmid;
 
-void *process_request(void *arg) {
-    int *shared_data = (int *)arg;
+struct Message *shared_memory;
 
+void *handle_client(void *arg) {
     while (1) {
-        // Ждем, пока клиент подключится
-        while (!client_connected) {
-            // Приостановим выполнение сервера
-            pause();
-        }
-
-        // Блокировка критической секции
         sem_wait(&mutex);
 
-        // Обработка запроса
-        *shared_data += *shared_data;
+        int number = shared_memory->number;
+        printf("Получено число от клиента: %d\n", number);
 
-        // Разблокировка критической секции
+        shared_memory->sum += number;
+
+        printf("Сумма отправлена клиенту: %d\n", shared_memory->sum);
+
         sem_post(&mutex);
-
-        // Отправка ответа клиенту
-        printf("Отправляем ответ клиенту: %d\n", *shared_data);
-
-        // Сбрасываем флаг
-        client_connected = 0;
     }
+
+    pthread_exit(NULL);
 }
 
 int main() {
-    key_t key = ftok("shared_memory_key", 65);
-    int shmid = shmget(key, SHM_SIZE, IPC_CREAT | 0666);
-    int *shared_data = (int *)shmat(shmid, NULL, 0);
-
-    // Инициализация семафора
     sem_init(&mutex, 0, 1);
 
-    pthread_t thread;
-
-    // Запуск потока для обработки запросов
-    pthread_create(&thread, NULL, process_request, (void *)shared_data);
-
-    while (1) {
-        // Ожидаем подключения клиента
-        printf("Ждем подключения клиента...\n");
-        client_connected = 1;
-
-        // После подключения клиента возобновим выполнение сервера
-        kill(getpid(), SIGCONT);
-
-        // Пауза для синхронизации
-        sleep(1);
+    // Создаем общую память
+    shmid = shmget(SHM_KEY, BUFFER_SIZE, IPC_CREAT | 0666);
+    if (shmid == -1) {
+        perror("shmget failed");
+        exit(EXIT_FAILURE);
     }
 
-    // Освобождение ресурсов
-    shmdt(shared_data);
+    // Присоединяем общую память
+    shared_memory = (struct Message *)shmat(shmid, NULL, 0);
+    if ((int)shared_memory == -1) {
+        perror("shmat failed");
+        exit(EXIT_FAILURE);
+    }
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, handle_client, NULL) != 0) {
+        perror("pthread_create failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Ожидаем завершения потока
+    pthread_join(thread, NULL);
+
+    // Отсоединяем общую память
+    shmdt(shared_memory);
+
+    // Удаляем общую память
     shmctl(shmid, IPC_RMID, NULL);
 
     sem_destroy(&mutex);
