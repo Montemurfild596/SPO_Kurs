@@ -22,20 +22,20 @@ int main() {
 
     int client_input;
     while (1) {
-        printf("Enter a number: ");
+        printf("Enter a number for the server: ");
         scanf("%d", &client_input);
 
-        sem_wait(sem);  // Ждем, пока семафор не станет доступным
-
-        // Отправка числа на сервер
+        sem_wait(sem);
         *shared_memory = client_input;
-
-        // Получение результата от сервера
-        printf("Client received result from server: %d\n", *shared_memory);
-
-        sem_post(sem);  // Освобождаем семафор
+        sem_post(sem);
 
         sleep(1);  // Имитация обработки результата
+
+        sem_wait(sem);
+        int server_result = *shared_memory;
+        sem_post(sem);
+
+        printf("Client received total sum from server: %d\n", server_result);
     }
 
     sem_close(sem);
