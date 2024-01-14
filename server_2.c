@@ -1,39 +1,79 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/sem.h>
 #include <pthread.h>
 
-#define SHM_SIZE 1024
+#define SHM_KEY 123456
+#define SEM_KEY 654321
 
-int shmid;
-void *shared_memory;
-pthread_mutex_t lock;
+int sum = 0;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 void *handle_client(void *arg) {
-    int num = *(int*)arg;
+    int shmid, semid;
+    int *shared_memory;
+    struct sembuf sem_op;
+
+    // Получаем доступ к разделяемой памяти
+    if ((shmid = shmget(SHM_KEY, sizeof(int), 0666)) < 0) {
+        perror("shmget");
+        exit(1);
+    }
+
+    // Получаем доступ к разделяемой памяти
+    if ((shared_memory = shmat(shmid, NULL, 0)) == (int *) -1) {
+        perror("shmat");
+        exit(1);
+    }
+
+    // Получаем доступ к семафору
+    if ((semid = semget(SEM_KEY, 1, 0666)) < 0) {
+        perror("semget");
+        exit(1);
+    }
+
+    // Читаем число из разделяемой памяти
+    sem_op.sem_num = 0;
+    sem_op.sem_op = -1;
+    sem_op.sem_flg = 0;
+    semop(semid, &sem_op, 1);
+    int number = *shared_memory;
+    sem_op.sem_op = 1;
+    semop(semid, &sem_op, 1);
+
+    // Обновляем сумму
     pthread_mutex_lock(&lock);
-    *(int*)shared_memory += num;
+    sum += number;
+    printf("Sum: %d\n", sum);
     pthread_mutex_unlock(&lock);
+
+    // Освобождаем разделяемую память
+    if (shmdt(shared_memory) < 0) {
+        perror("shmdt");
+        exit(1);
+    }
+
     return NULL;
 }
 
 int main() {
-    key_t key = ftok("shmfile", 65);
-    shmid = shmget(key, SHM_SIZE, 0666|IPC_CREAT);
-    shared_memory = shmat(shmid, NULL, 0);
-    pthread_mutex_init(&lock, NULL);
+    pthread_t thread;
 
     while (1) {
-        int num;
-        printf("Enter a number: ");
-        scanf("%d", &num);
-        pthread_t thread;
-        pthread_create(&thread, NULL, handle_client, &num);
+        // Создаем новую нить для обработки клиента
+        if (pthread_create(&thread, NULL, handle_client, NULL) != 0) {
+            perror("pthread_create");
+            exit(1);
+        }
+
+        // Ждем завершения нити
+        if (pthread_join(thread, NULL) != 0) {
+            perror("pthread_join");
+            exit(1);
+        }
     }
 
-    shmdt(shared_memory);
-    shmctl(shmid, IPC_RMID, NULL);
     return 0;
 }
