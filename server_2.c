@@ -1,70 +1,59 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <pthread.h>
 #include <semaphore.h>
 
-#define SHM_SIZE 1024
+#define SHM_SIZE  sizeof(int)
 
-int *shared_memory;
-sem_t *semaphore;
+sem_t mutex;
 
-void* process_request(void* arg) {
-    int client_number = *(int*)arg;
-    
-    // Получение доступа к общей памяти
-    sem_wait(semaphore);
+void *process_request(void *arg) {
+    int *shared_data = (int *)arg;
+
+    // Блокировка критической секции
+    sem_wait(&mutex);
 
     // Обработка запроса
-    int sum = 0;
-    for (int i = 0; i < SHM_SIZE; ++i) {
-        sum += shared_memory[i];
-    }
+    *shared_data += *shared_data;
 
-    // Отправка ответа клиенту
-    printf("Сервер: Обработка запроса от клиента %d. Ответ: %d\n", client_number, sum);
+    // Разблокировка критической секции
+    sem_post(&mutex);
 
-    // Освобождение ресурсов
-    sem_post(semaphore);
     pthread_exit(NULL);
 }
 
 int main() {
-    // Создание семафора
-    semaphore = sem_open("/my_sem", O_CREAT | O_EXCL, 0644, 1);
-    if (semaphore == SEM_FAILED) {
-        perror("sem_open");
-        exit(EXIT_FAILURE);
-    }
+    key_t key = ftok("shared_memory_key", 65);
+    int shmid = shmget(key, SHM_SIZE, IPC_CREAT | 0666);
+    int *shared_data = (int *)shmat(shmid, NULL, 0);
 
-    // Создание общей памяти
-    key_t key = ftok("/tmp", 'S');
-    int shmid = shmget(key, SHM_SIZE * sizeof(int), IPC_CREAT | 0666);
-    if (shmid < 0) {
-        perror("shmget");
-        exit(EXIT_FAILURE);
-    }
+    // Инициализация семафора
+    sem_init(&mutex, 0, 1);
 
-    // Подключение общей памяти
-    shared_memory = (int*)shmat(shmid, NULL, 0);
-
-    // Основной цикл сервера
-    int client_number = 1;
     while (1) {
         pthread_t thread;
-        pthread_create(&thread, NULL, process_request, (void*)&client_number);
-        pthread_detach(thread);
-        client_number++;
+
+        // Принимаем соединение от клиента
+        printf("Ждем запрос от клиента...\n");
+
+        // Запуск процесса обработки запроса в отдельном потоке
+        pthread_create(&thread, NULL, process_request, (void *)shared_data);
+
+        // Ждем завершения потока
+        pthread_join(thread, NULL);
+
+        // Отправка ответа клиенту
+        printf("Отправляем ответ клиенту: %d\n", *shared_data);
     }
 
     // Освобождение ресурсов
-    sem_close(semaphore);
-    sem_unlink("/my_sem");
-    shmdt(shared_memory);
+    shmdt(shared_data);
     shmctl(shmid, IPC_RMID, NULL);
+
+    sem_destroy(&mutex);
 
     return 0;
 }
