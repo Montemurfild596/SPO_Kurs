@@ -1,44 +1,53 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <semaphore.h>
 
-#define SHM_SIZE  sizeof(int)
+#define SHM_SIZE 1024
 
 int *shared_memory;
-sem_t *sem;
+sem_t *semaphore;
 
 int main() {
-    key_t key = ftok("shared_memory_key", 'R');
-    int shmid = shmget(key, SHM_SIZE, 0666);
-    shared_memory = (int *)shmat(shmid, NULL, 0);
-
-    sem = sem_open("/my_semaphore", 0);
-    if (sem == SEM_FAILED) {
+    // Получение доступа к семафору
+    semaphore = sem_open("/my_sem", 0);
+    if (semaphore == SEM_FAILED) {
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
 
-    int client_input;
-    while (1) {
-        printf("Enter a number for the server: ");
-        scanf("%d", &client_input);
-
-        sem_wait(sem);
-        *shared_memory = client_input;
-        sem_post(sem);
-
-        sleep(1);  // Имитация обработки результата
-
-        sem_wait(sem);
-        int server_result = *shared_memory;
-        sem_post(sem);
-
-        printf("Client received total sum from server: %d\n", server_result);
+    // Получение доступа к общей памяти
+    key_t key = ftok("/tmp", 'S');
+    int shmid = shmget(key, SHM_SIZE * sizeof(int), 0666);
+    if (shmid < 0) {
+        perror("shmget");
+        exit(EXIT_FAILURE);
     }
 
-    sem_close(sem);
+    // Подключение общей памяти
+    shared_memory = (int*)shmat(shmid, NULL, 0);
+
+    // Запрос данных у пользователя
+    int numbers[SHM_SIZE];
+    printf("Клиент: Введите %d чисел:\n", SHM_SIZE);
+    for (int i = 0; i < SHM_SIZE; ++i) {
+        scanf("%d", &numbers[i]);
+    }
+
+    // Отправка запроса серверу
+    sem_wait(semaphore);
+    for (int i = 0; i < SHM_SIZE; ++i) {
+        shared_memory[i] = numbers[i];
+    }
+    sem_post(semaphore);
+
+    // Ожидание ответа от сервера
+    sleep(1);
+
+    // Отключение от общей памяти
     shmdt(shared_memory);
 
     return 0;
