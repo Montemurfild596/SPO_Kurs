@@ -1,32 +1,59 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <semaphore.h>
 
-#define SHM_SIZE  sizeof(int)
+#define SHM_KEY 1234
+#define BUFFER_SIZE sizeof(struct Message)
+
+struct Message {
+    int number;
+    int sum;
+};
 
 int main() {
-    key_t key = ftok("shared_memory_key", 65);
-    int shmid = shmget(key, SHM_SIZE, 0666);
-    int *shared_data = (int *)shmat(shmid, NULL, 0);
+    sem_t semaphore;
+    struct Message *shared_memory;
+    int shmid;
 
-    // Запрос у пользователя
-    int user_input;
-    printf("Введите число: ");
-    scanf("%d", &user_input);
+    if (sem_init(&semaphore, 0, 1) < 0) {
+        perror("semaphore initialization failed");
+        exit(EXIT_FAILURE);
+    }
 
-    // Отправка запроса серверу
-    *shared_data = user_input;
+    // Получаем доступ к общей памяти
+    shmid = shmget(SHM_KEY, BUFFER_SIZE, 0666);
+    if (shmid == -1) {
+        perror("shmget failed");
+        exit(EXIT_FAILURE);
+    }
 
-    // Ожидание ответа от сервера
-    sleep(1); // Пауза для синхронизации
+    // Присоединяем общую память
+    shared_memory = (struct Message *)shmat(shmid, NULL, 0);
+    if ((int)shared_memory == -1) {
+        perror("shmat failed");
+        exit(EXIT_FAILURE);
+    }
 
-    // Вывод ответа
-    printf("Ответ от сервера: %d\n", *shared_data);
+    while (1) {
+        printf("Введите число: ");
+        scanf("%d", &shared_memory->number);
 
-    // Освобождение ресурсов
-    shmdt(shared_data);
+        sem_wait(&semaphore);
+
+        printf("Число отправлено серверу\n");
+
+        sem_post(&semaphore);
+    }
+
+    sem_destroy(&semaphore);
+
+    // Отсоединяем общую память
+    shmdt(shared_memory);
 
     return 0;
 }
